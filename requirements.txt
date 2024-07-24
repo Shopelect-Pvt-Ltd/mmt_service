@@ -1,0 +1,6 @@
+boto3
+requests
+pymongo
+botocore
+config
+openai
