@@ -28,16 +28,15 @@ def fetch_booking_documents():
     mmt_database = client[MMT_DATABASE]
     booking_collection = mmt_database[MMT_BOOKING_DATA_COLLECTION]
     try:
-        # query = {
-        #     "$and": [
-        #         {"booking_type": "HOTEL"},
-        #         {"parsed_invoice": {"$exists": True}},
-        #         {"match": {"$exists": False}},
-        #     ]
-        # }
-        query = {"_id": ObjectId("667572b91c9c0ea6e5d3b660")}
+        query = {
+            "$and": [
+                {"booking_type": "HOTEL"},
+                {"parsed_invoice": {"$exists": True}},
+            ]
+        }
+        # query = {"_id": ObjectId("667572b91c9c0ea6e5d3b660")}
         booking_documents = list(
-            booking_collection.find(query).sort("_id", 1).limit(10)
+            booking_collection.find(query).sort("_id", 1).limit(100)
         )
         print(
             f"Extracted invoice data and there are {len(booking_documents)} invoices."
@@ -55,15 +54,17 @@ def processHotelMatch(booking):
     invoice_len = len(invoice_data)
     print(f"No.of Booking and Invoice objects are : {booking_len} , {invoice_len}")
 
+    match_scores = {}
     matched = []
     invindexes = []
+    bkindexes = []
     # bookingobj gstclaimable amount is always present
     for bkindex, bookingobj in enumerate(booking_data):
         bkamount = bookingobj["GST Claimable Amount"]
         crdate = bookingobj["Created Date"]
         vendor_invoice_no = bookingobj["Vendor Invoice No"]
         customer_gstin = bookingobj["Customer GSTN"]
-        match_scores = []
+
         for invindex, invoiceobj in enumerate(invoice_data):
             if invindex in invindexes:
                 match_scores.append(0)
@@ -82,34 +83,103 @@ def processHotelMatch(booking):
             )
             match_output.append(simple_fuzzy_match(customer_gstin, guest_gstin))
             print(
-                f"Match scores for Invoice obj {invindex} with Booking obj {bookingobj} is {match_output} with length {len(match_output)} "
+                f"Match scores for Invoice obj {invindex} with Booking obj {bkindex} is {match_output} with length {len(match_output)} "
             )
             match_output = [item for item in match_output if item is not None]
-            match_scores.append(sum(match_output) / len(match_output))
-            print(
-                f"Processed Match scores for Invoice obj {invindex} is {match_output} with length {len(match_output)} with score {match_scores[invindex]}"
-            )
+            var_name = f"{bkindex}B-{invindex}I"
+            match_score = sum(match_output) / len(match_output)
+            match_scores[var_name] = match_score
+            # print(
+            #     f"Processed Match scores for Invoice obj {invindex} is {match_output} with length {len(match_output)} with score {match_scores[invindex]}"
+            # )
             # ------------Exit Invoices-----------------
-        if not max(match_scores) >= 50:
-            matchedobj = {"booking": bookingobj, "invoice": None}
-            matched.append(matchedobj)
-            continue
 
-        max_index = max(enumerate(match_scores), key=lambda x: x[1])[0]
-        matchedobj = {"booking": bookingobj, "invoice": invoice_data[max_index]}
-        invindexes.append(max_index)
+    print(f"Match Scores = {match_scores}")
+    max_key = max(match_scores, key=match_scores.get)
+    max_value = match_scores[max_key]
+    print(f"Max Match Score {max_value} on key {max_key}")
+    remove_parts = max_key.split("-")
+    # --------Populate matched------------
+    bkindexpop = int(remove_parts[0][:1])
+    bkindexes.append(bkindexpop)
+    invindexpop = int(remove_parts[1][:1])
+    invindexes.append(invindexpop)
+    matchedobj = {
+        "booking": booking_data[bkindexpop],
+        "invoice": invoice_data[invindexpop],
+    }
+    matched.append(matchedobj)
+    filtered_scores = {
+        key: value
+        for key, value in match_scores.items()
+        if all(part not in key for part in remove_parts)
+    }
+    while filtered_scores:
+        max_key = max(filtered_scores, key=filtered_scores.get)
+        max_value = match_scores[max_key]
+        if not max_value >= 50:
+            break
+        print(f"Max Match Score {max_value} on key {max_key}")
+        remove_parts = max_key.split("-")
+        # ---------Populate matched---------------
+        bkindexpop = int(remove_parts[0][:1])
+        bkindexes.append(bkindexpop)
+        invindexpop = int(remove_parts[1][:1])
+        invindexes.append(invindexpop)
+        matchedobj = {
+            "booking": booking_data[bkindexpop],
+            "invoice": invoice_data[invindexpop],
+        }
         matched.append(matchedobj)
-        print(f"Booking Object Date : {crdate} with best object : {max_index}")
+        filtered_scores = {
+            key: value
+            for key, value in filtered_scores.items()
+            if all(part not in key for part in remove_parts)
+        }
+        print("Filtered Match Scores:", filtered_scores)
+    print(f"Leftover Dictionary:{filtered_scores} ")
+    # -------Handling leftover dict------
+    while filtered_scores:
+        temp_key = list(filtered_scores.keys())[0]
+        remove_parts = temp_key.split("-")
+        # ---------Populate matched---------------
+        bkindexpop = int(remove_parts[0][:1])
+        bkindexes.append(bkindexpop)
+        invindexpop = int(remove_parts[1][:1])
+        invindexes.append(invindexpop)
+        matchedobj = {
+            "booking": booking_data[bkindexpop],
+            "invoice": None,
+        }
+        matched.append(matchedobj)
+        matchedobj = {
+            "booking": None,
+            "invoice": invoice_data[invindexpop],
+        }
+        matched.append(matchedobj)
+        # ------Remove Keys--------
+        filtered_scores = {
+            key: value
+            for key, value in filtered_scores.items()
+            if all(part not in key for part in remove_parts)
+        }
+    print(
+        f"Dictionary Complete with BK indexes {bkindexes} and InvIndexes {invindexes}"
+    )
 
-    # ----------------Populating with leftover invoice objects--------
+    # ----------------Populating with leftover invoice and booking objects--------
     if not len(invindexes) == invoice_len:
         for invindex in range(invoice_len):
             if invindex not in invindexes:
                 matchedobj = {"booking": None, "invoice": invoice_data[invindex]}
                 matched.append(matchedobj)
 
-    # Need to Append to Mongo here
-    # print(f"Final Object to be appended to Mongo is {matched}")
+    if not len(bkindexes) == booking_len:
+        for bkindex in range(booking_len):
+            if bkindex not in invindexes:
+                matchedobj = {"booking": booking_data[bkindex], "invoice": None}
+                matched.append(matchedobj)
+
     add_to_mongo(booking, matched)
 
 
