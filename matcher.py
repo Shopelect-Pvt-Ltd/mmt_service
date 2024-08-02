@@ -15,12 +15,14 @@ from config import (
     MMT_DATABASE,
     MMT_BOOKING_DATA_COLLECTION,
     MMT_MATCH_COLLECTION,
+    MMT_TEST_COLLECTION,
 )
 
 client = MongoClient(MONGODB_CONNECTION_STRING)
 mmt_database = client[MMT_DATABASE]
 booking_collection = mmt_database[MMT_BOOKING_DATA_COLLECTION]
-output_collection = mmt_database[MMT_MATCH_COLLECTION]
+# output_collection = mmt_database[MMT_MATCH_COLLECTION]
+output_collection = mmt_database[MMT_TEST_COLLECTION]
 
 
 def fetch_booking_documents():
@@ -34,10 +36,8 @@ def fetch_booking_documents():
                 {"parsed_invoice": {"$exists": True}},
             ]
         }
-        # query = {"_id": ObjectId("667572b91c9c0ea6e5d3b660")}
-        booking_documents = list(
-            booking_collection.find(query).sort("_id", 1).limit(100)
-        )
+        # query = {"_id": ObjectId("66758d644ec3e000a5eec22a")}
+        booking_documents = list(booking_collection.find(query).sort("_id", 1))
         print(
             f"Extracted invoice data and there are {len(booking_documents)} invoices."
         )
@@ -69,10 +69,21 @@ def processHotelMatch(booking):
             if invindex in invindexes:
                 match_scores.append(0)
                 continue
-            invamount = invoiceobj["parsed_invoice"]["total_tax_amount"]
             invdate = invoiceobj["invoiceDate"]
             invoice_no = invoiceobj["invoiceNo"]
-            guest_gstin = invoiceobj["parsed_invoice"]["guest_gstin"]
+            print(f"Invoice Object as {invoiceobj}")
+
+            try:
+                invamount = invoiceobj["parsed_invoice"]["total_tax_amount"]
+            except Exception as e:
+                logging.error(f"Error Parsing Tax Amount as {str(e)}")
+                invamount = None
+
+            try:
+                guest_gstin = invoiceobj["parsed_invoice"]["guest_gstin"]
+            except Exception as e:
+                logging.error(f"Error Parsing Guest_gstin as {str(e)}")
+                guest_gstin = None
 
             match_output = []
             # ----- Match Scores format is [Amount, Date, Invoice Number and Customer GSTIN]
@@ -200,13 +211,15 @@ def simple_fuzzy_match(value1, value2, field_type=None):
     if field_type == "amount":
         value1 = float(value1)
         value2 = float(value2)
-        difference_percentage = abs(value1 - value2) / max(value1, value2) * 100
-        return int(
-            100 - 3 * difference_percentage
-            if difference_percentage <= 15
-            else (70 if difference_percentage <= 30 else 0)
-        )
-
+        if value1 > 0 or value2 > 0:
+            difference_percentage = abs(value1 - value2) / max(value1, value2) * 100
+            return int(
+                100 - 3 * difference_percentage
+                if difference_percentage <= 15
+                else (70 if difference_percentage <= 30 else 0)
+            )
+        else:
+            return None
     # -----------------------Handling Date Exceptions--------------------------
     elif field_type == "date":
         try:
