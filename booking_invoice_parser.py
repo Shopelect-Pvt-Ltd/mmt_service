@@ -1,4 +1,4 @@
-import logging
+from logger import logging
 from pymongo import MongoClient
 import boto3
 import requests
@@ -6,7 +6,9 @@ import time
 import json
 import urllib.parse
 import openai
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from bson import ObjectId
+import threading
 
 from config import (
     MONGODB_CONNECTION_STRING,
@@ -56,13 +58,15 @@ def fetch_booking_documents():
             ]
         }
         # query = {"_id": ObjectId("667571cf4ec3e000a5eeb976")}
-        booking_documents = list(booking_collection.find(query).limit(1000))
+        booking_documents = list(
+            booking_collection.find(query).sort("_id", 1).limit(900)
+        )
         print(
             f"Extracted invoice data and there are {len(booking_documents)} invoices."
         )
         return booking_documents
     except Exception as e:
-        logging.info("Exception happened in fetch_booking_documents: " + str(e))
+        logging.error("Exception happened in fetch_booking_documents: " + str(e))
 
 
 def format_duration(seconds):
@@ -127,7 +131,7 @@ def get_s3_object_content(s3_url):
         content = response["Body"].read()
         return content
     except Exception as e:
-        logging.info("Exception happened in get_s3_object_content: " + str(e))
+        logging.error("Exception happened in get_s3_object_content: " + str(e))
         return None
 
 
@@ -150,22 +154,8 @@ def openai_chat_completion(messages):
 
 def truncate_text(text, max_length):
     if len(text) > max_length:
-        with open("truncated_text.txt", "a") as txtfile:
-            txtfile.write(f"Truncated Text is {text[:max_length]} \n")
         return text[:max_length]
-    with open("truncated_text.txt", "a") as txtfile:
-        txtfile.write(f"Extracted Test is {text} \n")
     return text
-
-
-def preprocess_text(text):
-    lines = text.splitlines()
-    relevant_lines = [
-        line for line in lines if "gst" in line.lower() or "invoice" in line.lower()
-    ]
-    with open("extracted_text.txt", "a") as txtfile:
-        txtfile.write(f"Preprocessed Test is {" ".join(relevant_lines)} \n")
-    return " ".join(relevant_lines)
 
 
 def process_text_with_openai(extracted_text, system_message):
@@ -184,17 +174,16 @@ def process_text_with_openai(extracted_text, system_message):
     if status == "success":
         try:
             main = json.loads(response_content)
-            with open("extracted_text.json", "a") as jsonfile:
-                jsonfile.write(f"Output: {main} \n")
+            # with open("extracted_text.json", "a") as jsonfile:
+            #     jsonfile.write(f"Output: {main} \n")
             return main, status, duration
         except (ValueError, SyntaxError) as e:
             logging.error("Error parsing response content: %s", e)
             return None, "failed", duration
     return None, status, duration
-    return None, None, None
 
 
-def processHotel(booking):
+def processHotel(docindex, booking, total_documents, lock):
     if "invoice_data" in booking and "booking_data" in booking:
         booking_data = booking["booking_data"]
         invoice_data = booking["invoice_data"]
@@ -205,7 +194,9 @@ def processHotel(booking):
 
         gst_object_path = invoice_data[0]["invoiceTypeWiseData"]["GST"]
         parsed_invoices = []
-        print(f"There are {len(gst_object_path)} GST Invoices")
+        print(
+            f"There are {len(gst_object_path)} GST Invoices for Document index {docindex}"
+        )
         for index in range(len(gst_object_path)):
             invoiceUrl = gst_object_path[index]["invoiceUrl"]
             if "airline-engine-scraped" not in invoiceUrl:
@@ -223,22 +214,42 @@ def processHotel(booking):
                     parsed_invoice, status, duration = process_text_with_openai(
                         extracted_text, system_message
                     )
-                    logging.info(parsed_invoice)
+                    # logging.info(parsed_invoice)
                     tempdict = gst_object_path[index]
                     tempdict["parsed_invoice"] = parsed_invoice
-                    print(tempdict)
+                    # print(tempdict)
                     parsed_invoices.append(tempdict)
 
                 else:
                     logging.error(f"Text extraction failed for URL: {invoiceUrl}")
         # print(parsed_invoices)
+        logging.info(parsed_invoices)
         add_to_mongo(booking, output_collection, parsed_invoices)
+        # print(f"----------{docindex}/{total_documents} Completed-------------")
 
 
 def processData(booking_documents):
-    for booking in booking_documents:
-        if booking["booking_type"] == "HOTEL":
-            processHotel(booking)
+    if not booking_documents:
+        print("No booking documents, empty collection")
+        return
+
+    lock = threading.Lock()
+
+    counter = 1
+    total_documents = len(booking_documents)
+    with ThreadPoolExecutor(max_workers=30) as executor:
+        futures = [
+            executor.submit(processHotel, docindex, booking, total_documents, lock)
+            for docindex, booking in enumerate(booking_documents)
+        ]
+        for future in futures:
+            # Wait till all threads complete
+            try:
+                future.result()
+                print(f"------------{counter}/{total_documents} Commpleted---------")
+                counter += 1
+            except Exception as e:
+                print(f"A thread failed due to {str(e)}")
 
 
 def add_to_mongo(booking, output_collection, parsed_invoices):
@@ -255,6 +266,6 @@ def add_to_mongo(booking, output_collection, parsed_invoices):
 
 
 if __name__ == "__main__":
-    booking_data = fetch_booking_documents()
-    logging.info("No. of booking documents: " + str(len(booking_data)))
-    processData(booking_data)
+    booking_documents = fetch_booking_documents()
+    logging.info("No. of booking documents: " + str(len(booking_documents)))
+    processData(booking_documents)
