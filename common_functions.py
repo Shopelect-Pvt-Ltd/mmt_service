@@ -130,3 +130,18 @@ def fetch_irn_match(rowop, irn_collection):
     else:
         irndoc = "No IRN Number Present In GST Information"
         return irndoc
+
+
+def fetch_invoice_status(invoiceObj):
+    try:
+        invoice_status = invoiceObj["parsed_invoice"]
+        invoice_status = "Invoice with Valid Link"
+        return invoice_status
+    except KeyError:
+        try:
+            invoice_status = invoiceObj["invoiceUrl"]
+            invoice_status = "Invoice with Invalid Link"
+            return invoice_status
+        except KeyError:
+            invoice_status = "Invoice with No Link"
+            return invoice_status

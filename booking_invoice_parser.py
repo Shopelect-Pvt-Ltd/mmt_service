@@ -14,6 +14,7 @@ from config import (
     MONGODB_CONNECTION_STRING,
     MMT_DATABASE,
     MMT_BOOKING_DATA_COLLECTION,
+    MMT_TEST_COLLECTION,
     S3_BUCKET_NAME,
     AWS_ACCESS_KEY_ID,
     AWS_ACCESS_SECRET_KEY,
@@ -40,6 +41,7 @@ client = MongoClient(MONGODB_CONNECTION_STRING)
 mmt_database = client[MMT_DATABASE]
 booking_collection = mmt_database[MMT_BOOKING_DATA_COLLECTION]
 output_collection = booking_collection
+# output_collection = mmt_database[MMT_TEST_COLLECTION]
 
 
 def fetch_booking_documents():
@@ -59,7 +61,7 @@ def fetch_booking_documents():
                 {"expense_client_id": {"$regex": expense_client_id}},
             ]
         }
-        # query = {"_id": ObjectId("667571cf4ec3e000a5eeb976")}
+        # query = {"_id": ObjectId("66763d9fa33fd7fd60f37583")}
         booking_documents = list(
             booking_collection.find(query).sort("_id", 1).limit(900)
         )

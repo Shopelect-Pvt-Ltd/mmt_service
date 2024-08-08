@@ -19,27 +19,37 @@ from config import (
     expense_client_id,
 )
 
+from common_functions import fetch_invoice_status
+
+
 client = MongoClient(MONGODB_CONNECTION_STRING)
 mmt_database = client[MMT_DATABASE]
 booking_collection = mmt_database[MMT_BOOKING_DATA_COLLECTION]
 # output_collection = mmt_database[MMT_MATCH_COLLECTION]
-# output_collection = mmt_database[MMT_TEST_COLLECTION]
 output_collection = mmt_database[MMT_BOOKING_DATA_COLLECTION]
+# output_collection = mmt_database[MMT_BOOKING_DATA_COLLECTION]
 
 
 def fetch_booking_documents():
-    client = MongoClient(MONGODB_CONNECTION_STRING)
-    mmt_database = client[MMT_DATABASE]
-    booking_collection = mmt_database[MMT_BOOKING_DATA_COLLECTION]
+    # client = MongoClient(MONGODB_CONNECTION_STRING)
+    # mmt_database = client[MMT_DATABASE]
+    # booking_collection = mmt_database[MMT_BOOKING_DATA_COLLECTION]
     try:
+        # query = {
+        #     "$and": [
+        #         {"booking_type": "HOTEL"},
+        #         # {"parsed_invoice": {"$exists": True}},
+        #         {"expense_client_id": {"$regex": expense_client_id}},
+        #     ]
+        # }
+        # query = {"_id": ObjectId("66763d9fa33fd7fd60f37583")}
         query = {
             "$and": [
+                {"expense_client_id": "cb665c18-926e-4d42-9bb6-9f1ebe26261e"},
                 {"booking_type": "HOTEL"},
-                {"parsed_invoice": {"$exists": True}},
-                {"expense_client_id": {"$regex": expense_client_id}},
             ]
         }
-        # query = {"_id": ObjectId("66758d644ec3e000a5eec22a")}
+
         booking_documents = list(booking_collection.find(query).sort("_id", 1))
         print(
             f"Extracted invoice data and there are {len(booking_documents)} invoices."
@@ -53,9 +63,38 @@ def processHotelMatch(booking):
     id = booking["_id"]
     booking_data = booking["booking_data"]
     booking_len = len(booking_data)
-    invoice_data = booking["parsed_invoice"]
-    invoice_len = len(invoice_data)
-    print(f"No.of Booking and Invoice objects are : {booking_len} , {invoice_len}")
+    actual_invoice_data = booking["invoice_data"][0]["invoiceTypeWiseData"]["GST"]
+    invoice_len = len(actual_invoice_data)
+    parsed_invoice_len = 0
+    parsed_invoice_dataset = []
+    parsed_invoice_nos = []
+    # print(booking)
+    try:
+        parsed_invoice_dataset = booking["parsed_invoice"]
+        parsed_invoice_nos.extend(
+            parsed_invoice_data["invoiceNo"]
+            for parsed_invoice_data in parsed_invoice_dataset
+        )
+        parsed_invoice_len = len(parsed_invoice_dataset)
+    except Exception as e:
+        print("No Parsed Invoice data")
+
+    # print(
+    #     f"No.of Booking and Invoice objects are : {booking_len} , {invoice_len}, with parsed invoices : {parsed_invoice_len}"
+    # )
+    print(f"Parsed Invoice Numbers are {parsed_invoice_nos}")
+
+    for datapoint in actual_invoice_data:
+        try:
+            if datapoint["invoiceNo"] not in parsed_invoice_nos:
+                # print(datapoint["invoiceNo"])
+                parsed_invoice_dataset.append(datapoint)
+        except KeyError:
+            parsed_invoice_dataset.append(datapoint)
+            continue
+    # print(f"Original Length of Invooice data is {invoice_len}")
+    # print(f"Final Length of invoice data is {len(parsed_invoice_dataset)}")
+    invoice_len = len(parsed_invoice_dataset)
 
     match_scores = {}
     matched = []
@@ -68,24 +107,33 @@ def processHotelMatch(booking):
         vendor_invoice_no = bookingobj["Vendor Invoice No"]
         customer_gstin = bookingobj["Customer GSTN"]
 
-        for invindex, invoiceobj in enumerate(invoice_data):
+        for invindex, invoiceobj in enumerate(parsed_invoice_dataset):
             if invindex in invindexes:
                 match_scores.append(0)
                 continue
-            invdate = invoiceobj["invoiceDate"]
-            invoice_no = invoiceobj["invoiceNo"]
+            try:
+                invdate = invoiceobj["invoiceDate"]
+            except KeyError:
+                invdate = None
+            try:
+                invoice_no = invoiceobj["invoiceNo"]
+            except KeyError:
+                invoice_no = None
+
             # print(f"Invoice Object as {invoiceobj}")
 
             try:
                 invamount = invoiceobj["parsed_invoice"]["total_tax_amount"]
             except Exception as e:
-                logging.error(f"Error Parsing Tax Amount as {str(e)}")
+                # logging.error(f"Error Parsing Tax Amount as {str(e)}")
+                print(f"Error Parsing Tax Amount as {str(e)}")
                 invamount = None
 
             try:
                 guest_gstin = invoiceobj["parsed_invoice"]["guest_gstin"]
             except Exception as e:
-                logging.error(f"Error Parsing Guest_gstin as {str(e)}")
+                # logging.error(f"Error Parsing Guest_gstin as {str(e)}")
+                print(f"Error Parsing Guest_gstin as {str(e)}")
                 guest_gstin = None
 
             match_output = []
@@ -96,19 +144,20 @@ def processHotelMatch(booking):
                 simple_fuzzy_match(invoice_no, vendor_invoice_no, "inv_num")
             )
             match_output.append(simple_fuzzy_match(customer_gstin, guest_gstin))
-            print(
-                f"Match scores for Invoice obj {invindex} with Booking obj {bkindex} is {match_output} with length {len(match_output)} "
-            )
+            # print(
+            #     f"Match scores for Invoice obj {invindex} with Booking obj {bkindex} is {match_output} with length {len(match_output)} "
+            # )
             match_output = [item for item in match_output if item is not None]
             var_name = f"{bkindex}B-{invindex}I"
+            print(f"Match Output is {match_output}")
             match_score = sum(match_output) / len(match_output)
             match_scores[var_name] = match_score
             # print(
-            #     f"Processed Match scores for Invoice obj {invindex} is {match_output} with length {len(match_output)} with score {match_scores[invindex]}"
+            #     f"Processed Match scores for Invoice obj {invindex} is {match_output} with length {len(match_output)} with score {match_scores[var_name]}"
             # )
             # ------------Exit Invoices-----------------
 
-    print(f"Match Scores = {match_scores}")
+    # print(f"Match Scores = {match_scores}")
     max_key = max(match_scores, key=match_scores.get)
     max_value = match_scores[max_key]
     print(f"Max Match Score {max_value} on key {max_key}")
@@ -118,9 +167,15 @@ def processHotelMatch(booking):
     bkindexes.append(bkindexpop)
     invindexpop = int(remove_parts[1][:1])
     invindexes.append(invindexpop)
+    invoice_status = fetch_invoice_status(parsed_invoice_dataset[invindexpop])
     matchedobj = {
+        "BookingEvent": (bkindexpop + 1),
+        "TotalBookingEvents": booking_len,
+        "InvoiceEvent": (invindexpop + 1),
+        "TotalInvoiceEvents": invoice_len,
+        "InvoiceStatus": invoice_status,
         "booking": booking_data[bkindexpop],
-        "invoice": invoice_data[invindexpop],
+        "invoice": parsed_invoice_dataset[invindexpop],
     }
     matched.append(matchedobj)
     filtered_scores = {
@@ -140,9 +195,15 @@ def processHotelMatch(booking):
         bkindexes.append(bkindexpop)
         invindexpop = int(remove_parts[1][:1])
         invindexes.append(invindexpop)
+        invoice_status = fetch_invoice_status(parsed_invoice_dataset[invindexpop])
         matchedobj = {
+            "BookingEvent": (bkindexpop + 1),
+            "TotalBookingEvents": booking_len,
+            "InvoiceEvent": (invindexpop + 1),
+            "TotalInvoiceEvents": invoice_len,
+            "InvoiceStatus": invoice_status,
             "booking": booking_data[bkindexpop],
-            "invoice": invoice_data[invindexpop],
+            "invoice": parsed_invoice_dataset[invindexpop],
         }
         matched.append(matchedobj)
         filtered_scores = {
@@ -161,14 +222,22 @@ def processHotelMatch(booking):
         bkindexes.append(bkindexpop)
         invindexpop = int(remove_parts[1][:1])
         invindexes.append(invindexpop)
+        invoice_status = fetch_invoice_status(parsed_invoice_dataset[invindexpop])
         matchedobj = {
+            "BookingEvent": (bkindexpop + 1),
+            "TotalBookingEvents": booking_len,
+            "InvoiceEvent": False,
             "booking": booking_data[bkindexpop],
             "invoice": None,
         }
         matched.append(matchedobj)
         matchedobj = {
+            "BookingEvent": False,
+            "InvoiceEvent": (invindexpop + 1),
+            "TotalInvoiceEvents": invoice_len,
+            "InvoiceStatus": invoice_status,
             "booking": None,
-            "invoice": invoice_data[invindexpop],
+            "invoice": parsed_invoice_dataset[invindexpop],
         }
         matched.append(matchedobj)
         # ------Remove Keys--------
@@ -185,13 +254,27 @@ def processHotelMatch(booking):
     if not len(invindexes) == invoice_len:
         for invindex in range(invoice_len):
             if invindex not in invindexes:
-                matchedobj = {"booking": None, "invoice": invoice_data[invindex]}
+                invoice_status = fetch_invoice_status(parsed_invoice_dataset[invindex])
+                matchedobj = {
+                    "BookingEvent": False,
+                    "InvoiceEvent": (invindex + 1),
+                    "TotalInvoiceEvents": invoice_len,
+                    "InvoiceStatus": invoice_status,
+                    "booking": None,
+                    "invoice": parsed_invoice_dataset[invindex],
+                }
                 matched.append(matchedobj)
 
     if not len(bkindexes) == booking_len:
         for bkindex in range(booking_len):
-            if bkindex not in invindexes:
-                matchedobj = {"booking": booking_data[bkindex], "invoice": None}
+            if bkindex not in bkindexes:
+                matchedobj = {
+                    "BookingEvent": (bkindex + 1),
+                    "TotalBookingEvents": booking_len,
+                    "InvoiceEvent": False,
+                    "booking": booking_data[bkindex],
+                    "invoice": None,
+                }
                 matched.append(matchedobj)
 
     add_to_mongo(booking, matched)
@@ -202,8 +285,9 @@ def processMatch(booking_documents):
     if not booking_documents:
         print("No booking documents, empty collection")
         return
-    for bookdoc in booking_documents:
+    for docindex, bookdoc in enumerate(booking_documents):
         processHotelMatch(bookdoc)
+        print(f"Document {docindex+1} complete \n \n")
 
 
 # --------------------Fuzzy Function------------------------------
