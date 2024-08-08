@@ -23,6 +23,7 @@ from config import (
     AZURE_OPENAI_API_KEY,
     OPENAI_KET,
     system_message,
+    expense_client_id,
 )
 
 openai_headers = {
@@ -55,6 +56,7 @@ def fetch_booking_documents():
                         "$regex": "airline-engine-scraped"
                     }
                 },
+                {"expense_client_id": {"$regex": expense_client_id}},
             ]
         }
         # query = {"_id": ObjectId("667571cf4ec3e000a5eeb976")}

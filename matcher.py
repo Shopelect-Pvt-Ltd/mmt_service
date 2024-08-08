@@ -16,13 +16,15 @@ from config import (
     MMT_BOOKING_DATA_COLLECTION,
     MMT_MATCH_COLLECTION,
     MMT_TEST_COLLECTION,
+    expense_client_id,
 )
 
 client = MongoClient(MONGODB_CONNECTION_STRING)
 mmt_database = client[MMT_DATABASE]
 booking_collection = mmt_database[MMT_BOOKING_DATA_COLLECTION]
 # output_collection = mmt_database[MMT_MATCH_COLLECTION]
-output_collection = mmt_database[MMT_TEST_COLLECTION]
+# output_collection = mmt_database[MMT_TEST_COLLECTION]
+output_collection = mmt_database[MMT_BOOKING_DATA_COLLECTION]
 
 
 def fetch_booking_documents():
@@ -34,6 +36,7 @@ def fetch_booking_documents():
             "$and": [
                 {"booking_type": "HOTEL"},
                 {"parsed_invoice": {"$exists": True}},
+                {"expense_client_id": {"$regex": expense_client_id}},
             ]
         }
         # query = {"_id": ObjectId("66758d644ec3e000a5eec22a")}
@@ -71,7 +74,7 @@ def processHotelMatch(booking):
                 continue
             invdate = invoiceobj["invoiceDate"]
             invoice_no = invoiceobj["invoiceNo"]
-            print(f"Invoice Object as {invoiceobj}")
+            # print(f"Invoice Object as {invoiceobj}")
 
             try:
                 invamount = invoiceobj["parsed_invoice"]["total_tax_amount"]
